@@ -40,7 +40,6 @@ split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';"
 `--parallel`オプションにより、分割後のクエリを並列実行することもできます。
 
 ```bash:parallel
-### execute parallel
 split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';" --parallel 8
 ```
 
@@ -51,7 +50,7 @@ split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';" --parallel 
 `go get`を使用します。
 
 ```bash
-go get github.com/etsxxx/split_mysql
+go get github.com/livesense-inc/split_mysql
 ```
 
 依存関係は[Glide](https://github.com/Masterminds/glide)で管理しています。

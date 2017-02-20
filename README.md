@@ -41,7 +41,6 @@ split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';"
 `--parallel` option creates concurrent executions.
 
 ```bash:parallel
-### execute parallel
 split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';" --parallel 8
 ```
 
@@ -52,7 +51,7 @@ More options, see `--help`.
 Use `go get`
 
 ```bash
-go get github.com/etsxxx/split_mysql
+go get github.com/livesense-inc/split_mysql
 ```
 
 Dependencies are managed by [Glide](https://github.com/Masterminds/glide).
