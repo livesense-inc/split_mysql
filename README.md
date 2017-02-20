@@ -40,7 +40,7 @@ split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';"
 
 `--parallel` option creates concurrent executions.
 
-```bash:parallel example
+```bash:parallel
 ### execute parallel
 split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';" --parallel 8
 ```

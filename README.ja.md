@@ -39,7 +39,7 @@ split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';"
 
 `--parallel`オプションにより、分割後のクエリを並列実行することもできます。
 
-```bash:parallel example
+```bash:parallel
 ### execute parallel
 split_mysql -D theDB -e "UPDATE theTable SET ... WHERE foo = 'bar';" --parallel 8
 ```
