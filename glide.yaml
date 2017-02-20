@@ -1,0 +1,11 @@
+package: github.com/livesense-inc/split_mysql
+import:
+- package: github.com/Sirupsen/logrus
+- package: github.com/go-sql-driver/mysql
+- package: github.com/gosuri/uiprogress
+- package: github.com/sjmudd/mysql_defaults_file
+- package: gopkg.in/urfave/cli.v1
+testImport:
+- package: github.com/stretchr/testify
+  subpackages:
+  - assert
