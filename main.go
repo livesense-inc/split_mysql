@@ -142,9 +142,24 @@ var cliDefaultCharSet = cli.StringFlag{
 	Value: "utf8",
 }
 
+// create logger
+var logger = logrus.New()
+
+func doUpdate(sr *splmysql.Runner, sessionData *splmysql.Session, parallel int, maxRetry int, cnt int) (err error) {
+	// execute parallel
+	retrySessionData, err := sr.RunParallel(sessionData, parallel)
+	// retry
+	if err != nil {
+		logger.Warnf("Session %d failed: %s\n", cnt, err.Error())
+		logger.Debugf("Retry %d/%d: execute %d transactions.",
+			cnt+1, maxRetry, retrySessionData.GetSessionResult().Plan)
+
+		return doUpdate(sr, retrySessionData, parallel, maxRetry, cnt+1)
+	}
+	return
+}
+
 func doMain(c *cli.Context) (err error) {
-	// create logger
-	logger := logrus.New()
 	logger.Formatter = &logrus.TextFormatter{
 		FullTimestamp: false,
 	}
@@ -220,25 +235,7 @@ func doMain(c *cli.Context) (err error) {
 			errChan <- err
 			return err
 		}
-
-		// execute parallel
-		retrySessionData, err := sess.RunParallel(parallel)
-		// retry
-		if err != nil {
-			for i := 0; i < maxretry; i++ {
-				logger.Warnf("Session failed: %s\n", err.Error())
-				logger.Debugf("Retry %d/%d: execute %d transactions.",
-					i+1, maxretry, retrySessionData.GetSessionResult().Plan)
-
-				retrySessionData, err = retrySessionData.RunParallel(parallel)
-				if len(retrySessionData.GetFailedTransactions()) == 0 {
-					err = nil
-					break
-				}
-			}
-		}
-
-		errChan <- err
+		errChan <- doUpdate(&sr, sess, parallel, maxretry, 0)
 		return nil
 	}()
 
@@ -328,27 +325,27 @@ func doMain(c *cli.Context) (err error) {
 		}
 	}
 
-	totalResult := splmysql.Result{
-		Plan:         0,
-		Executed:     0,
-		Succeeded:    0,
-		Failed:       0,
-		RowsAffected: 0,
-	}
-	for _, sess := range sr.Sessions {
+	// Create result and print
+	totalResult := splmysql.NewResult(0)
+	firstPlanned := int64(0)
+	finallyFailed := int64(0)
+	for n, sess := range sr.Sessions {
 		sessResult := sess.GetSessionResult()
-		totalResult.Executed += sessResult.Executed
-		totalResult.Succeeded += sessResult.Succeeded
-		totalResult.RowsAffected += sessResult.RowsAffected
+		totalResult.Append(sessResult)
+		if n == 0 {
+			firstPlanned = sessResult.Plan
+		}
 		// update with final session result
-		totalResult.Failed = sessResult.Failed
+		finallyFailed = sessResult.Failed
 	}
 
-	// Output result
+	logger.Debugf("SESSIONS: Planned %d queries and %d executed - %d succeeded / %d failed",
+		firstPlanned, totalResult.Executed, totalResult.Succeeded, totalResult.Failed)
+	// Output result force
 	loglevelBefore := logger.Level
 	logger.Level = logrus.InfoLevel
-	logger.Infof("RESULT: Executed %d queryies, %d succeeded and %d rows updated, %d failed.",
-		totalResult.Executed, totalResult.Succeeded, totalResult.RowsAffected, totalResult.Failed)
+	logger.Infof("RESULT: %d queries affected and %d rows updated. %d queries failed.",
+		totalResult.Succeeded, totalResult.RowsAffected, finallyFailed)
 	logger.Level = loglevelBefore
 	return err
 }

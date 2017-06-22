@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Sirupsen/logrus"
 
@@ -37,43 +38,6 @@ type Runner struct {
 
 	// Sessions is splmysql sessions handled by this Runner
 	Sessions []*Session
-}
-
-// Result is struct of SQL execution result.
-type Result struct {
-	// Plan is number of estimated to execute
-	Plan int64
-	// Executed is number of queries executed to DB.
-	Executed int64
-	// Succeeded is number of queries succeeded.
-	Succeeded int64
-	// Failed is number of queries failed.
-	Failed int64
-	// RowsAffected is number of rows updated.
-	RowsAffected int64
-	// LastInsertID is auto_increment last id. Not used in this implementation.
-	//LastInsertID int64
-}
-
-// NewResult returns struct of New Result
-func NewResult(plan int64) Result {
-	return Result{
-		Plan:      plan,
-		Executed:  0,
-		Succeeded: 0,
-		Failed:    0,
-	}
-}
-
-// Copy returns self copy struct
-func (r *Result) Copy() Result {
-	return Result{
-		Plan:         r.Plan,
-		Executed:     r.Executed,
-		Succeeded:    r.Succeeded,
-		Failed:       r.Failed,
-		RowsAffected: r.RowsAffected,
-	}
 }
 
 // DefaultSplitRange is lower than 131072
@@ -218,7 +182,8 @@ func (sr *Runner) doUpdate(sql string) (rowsAffected int64, lastInsertID int64, 
 	return rowsAffected, lastInsertID, nil
 }
 
-func (sr *Runner) NewSession(query string) (session Session, err error) {
+// NewSession creates session data from query.
+func (sr *Runner) NewSession(query string) (session *Session, err error) {
 	execQuery := strings.Trim(query, " ;")
 	if !isUpdateQuery(execQuery) {
 		return session, NewInvalidUpdateQueryError("query must starts with 'UPDATE tablename SET ...'")
@@ -276,8 +241,7 @@ func (sr *Runner) NewSession(query string) (session Session, err error) {
 	}
 
 	// create split update session information
-	session = Session{
-		runner:                   sr,
+	session = &Session{
 		Query:                    execQuery,
 		DBName:                   sr.DBName,
 		TableName:                tableName,
@@ -295,6 +259,70 @@ func (sr *Runner) NewSession(query string) (session Session, err error) {
 	return session, nil
 }
 
+// RunParallel executes session parallel
+func (sr *Runner) RunParallel(sess *Session, parallel int) (retrySessionData *Session, err error) {
+	// append Session
+	sr.Sessions = append(sr.Sessions, sess)
+
+	semaphore := make(chan struct{}, parallel)
+	sr.db.SetMaxIdleConns(parallel)
+	sr.db.SetMaxOpenConns(parallel)
+	sr.db.SetConnMaxLifetime(0)
+
+	sr.infof("[%s.%s] Session start (planned %d queries)", sess.DBName, sess.TableName, sess.result.Plan)
+
+	var wg sync.WaitGroup
+	for _, transaction := range sess.transactions {
+		wg.Add(1)
+		semaphore <- struct{}{}
+		go func(tx *Transaction) error {
+			defer wg.Done()
+
+			start := tx.rangeStart
+			end := tx.rangeEnd
+			updateSQL := getSplittedUpdateSQL(sess.Query, sess.SplittableColumn, start, end)
+			sr.tracef("- (%d) update (range: %s = %d - %d) start",
+				tx.id, sess.SplittableColumn, start, end)
+
+			rowsAffected, _, err := sr.doUpdate(updateSQL)
+			tx.completed = true
+			if err != nil {
+				sr.warnf("- (%d) ERROR: %s", tx.id, err.Error())
+				tx.failed = true
+			}
+			sess.updateResult(err, rowsAffected)
+			sr.infof("[%d] - Affected %d rows, total %d updated.", tx.id, rowsAffected, sess.result.RowsAffected)
+
+			<-semaphore
+			return nil
+		}(transaction)
+	}
+	wg.Wait()
+	close(semaphore)
+
+	r := sess.GetSessionResult()
+	if r.Failed > 0 {
+		retrySessionData = &Session{
+			Query:                    sess.Query,
+			DBName:                   sess.DBName,
+			TableName:                sess.TableName,
+			SplittableColumn:         sess.SplittableColumn,
+			SplittableColumnMinValue: sess.SplittableColumnMinValue,
+			SplittableColumnMaxValue: sess.SplittableColumnMaxValue,
+			SplitRange:               sess.SplitRange,
+			transactions:             sess.GetFailedTransactions(),
+			result:                   NewResult(int64(len(sess.GetFailedTransactions()))),
+		}
+		err = fmt.Errorf("[%s.%s] %d transactions failed\n", sess.DBName, sess.TableName, r.Failed)
+		return
+	}
+
+	sr.infof("[%s.%s] Total %d rows updated.", sess.DBName, sess.TableName, r.RowsAffected)
+	sr.infof("[%s.%s] Executed %d queries: %d succeeded, %d failed.",
+		sess.DBName, sess.TableName, r.Executed, r.Succeeded, r.Failed)
+	return
+}
+
 // SimpleUpdate executes UPDATE query simply, no modifies.
 func (sr *Runner) SimpleUpdate(query string) (result Result, err error) {
 	execQuery := strings.Trim(query, " ;")
@@ -303,7 +331,6 @@ func (sr *Runner) SimpleUpdate(query string) (result Result, err error) {
 	}
 	// create dummy session
 	session := Session{
-		runner:                   sr,
 		Query:                    execQuery,
 		DBName:                   sr.DBName,
 		TableName:                "",
