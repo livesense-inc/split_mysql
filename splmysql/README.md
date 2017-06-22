@@ -39,13 +39,13 @@ It's ok, execute query.
 ```golang
 // Create session. Runner connect to DB and get table information.
 // If connection information has invalid parameters, error returns. 
-sess, err := sr.NewSession(sql)
+sessionData, err := sr.NewSession(sql)
 if err != nil {
     return err
 }
 
 // Let's execute parallel
-retrySessionData, err := sess.RunParallel(numberOfParallel)
+retrySessionData, err := sr.RunParallel(sessionData, numberOfParallel)
 ```
 
 `RunParallel()` returns Session object `retrySessionData` to retry failed queries.
